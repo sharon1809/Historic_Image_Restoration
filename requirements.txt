@@ -1,0 +1,14 @@
+torch
+torchvision
+datasets
+huggingface_hub
+numpy
+Pillow
+matplotlib
+scikit-image
+tqdm
+PyYAML
+jupyter
+ipykernel
+tensorboard
+lpips
