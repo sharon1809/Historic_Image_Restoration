@@ -12,3 +12,4 @@ jupyter
 ipykernel
 tensorboard
 lpips
+torchmetrics
