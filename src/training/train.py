@@ -57,6 +57,7 @@ def main():
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints", help="Directory to save checkpoints")
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume training from")
     parser.add_argument("--patience", type=int, default=5, help="Early stopping patience (epochs)")
+    parser.add_argument("--loss-mode", type=str, default="A", choices=["A", "B", "C", "D"], help="Loss configuration mode (A, B, C, D)")
     
     args = parser.parse_args()
 
@@ -103,7 +104,7 @@ def main():
 
     print("Initializing model...")
     model = RestorationUNet(in_channels=3, out_channels=3, base_channels=32).to(device)
-    criterion = CombinedLoss(lpips_weight=0.5).to(device)
+    criterion = CombinedLoss(mode=args.loss_mode, lpips_weight=0.5, ssim_weight=0.1, device=device).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     metrics_calculator = RestorationMetrics(device)
 
