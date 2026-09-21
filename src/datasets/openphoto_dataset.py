@@ -20,12 +20,14 @@ class OpenPhotoRestoreDataset(Dataset):
         hf_dataset: HFDataset,
         crop_size: int = 256,
         training: bool = True,
+        use_synthetic_scratches: bool = False,
     ):
         self.dataset = hf_dataset
 
         self.transform = PairedTransform(
             crop_size=crop_size,
             training=training,
+            use_synthetic_scratches=use_synthetic_scratches
         )
 
     def __len__(self) -> int:

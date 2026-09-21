@@ -58,6 +58,7 @@ def main():
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume training from")
     parser.add_argument("--patience", type=int, default=5, help="Early stopping patience (epochs)")
     parser.add_argument("--loss-mode", type=str, default="A", choices=["A", "B", "C", "D"], help="Loss configuration mode (A, B, C, D)")
+    parser.add_argument("--synthetic-scratches", action="store_true", help="Enable synthetic scratches during training (Phase 3)")
     
     args = parser.parse_args()
 
@@ -79,7 +80,8 @@ def main():
     train_dataset = OpenPhotoRestoreDataset(
         splits["train"],
         crop_size=256,
-        training=True
+        training=True,
+        use_synthetic_scratches=args.synthetic_scratches
     )
     
     val_dataset = OpenPhotoRestoreDataset(
