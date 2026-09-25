@@ -93,6 +93,28 @@ def main():
 
     print(f"Saving restored image to {output_path}...")
     output_image = tensor_to_image(output_tensor)
+    
+    # --- POST-PROCESSING ---
+    # The U-Net tends to shift colors/brightness (darkening). We can perfectly fix this 
+    # by matching the color histogram of the output to the original input image.
+    try:
+        import numpy as np
+        from skimage import exposure
+        
+        # Convert both to numpy arrays
+        original_np = np.array(Image.open(PROJECT_ROOT / args.image).convert("RGB"))
+        restored_np = np.array(output_image)
+        
+        # Match histograms
+        matched_np = exposure.match_histograms(restored_np, original_np, channel_axis=-1)
+        
+        # Convert back to PIL Image
+        output_image = Image.fromarray(matched_np.astype(np.uint8))
+        print("Successfully corrected color and brightness using histogram matching!")
+    except Exception as e:
+        print(f"Warning: Histogram matching failed ({e}). Saving raw output instead.")
+    # -----------------------
+
     output_image.save(output_path)
     
     print("Done!")
