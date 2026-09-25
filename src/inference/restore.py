@@ -66,7 +66,7 @@ def main():
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     print("Loading model...")
-    model = RestorationUNet(in_channels=3, out_channels=3, base_channels=32)
+    model = RestorationUNet(in_channels=3, out_channels=3, base_channels=64)
     
     # Load checkpoint
     checkpoint_path = PROJECT_ROOT / args.checkpoint

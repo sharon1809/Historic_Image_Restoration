@@ -105,7 +105,7 @@ def main():
     )
 
     print("Initializing model...")
-    model = RestorationUNet(in_channels=3, out_channels=3, base_channels=32).to(device)
+    model = RestorationUNet(in_channels=3, out_channels=3, base_channels=64).to(device)
     criterion = CombinedLoss(mode=args.loss_mode, lpips_weight=0.5, ssim_weight=0.1, device=device).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     metrics_calculator = RestorationMetrics(device)

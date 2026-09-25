@@ -104,6 +104,7 @@ class RestorationUNet(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        identity = x
 
         # Encoder
         skip1, x = self.encoder1(x)
@@ -120,7 +121,8 @@ class RestorationUNet(nn.Module):
         x = self.decoder2(x, skip2)
         x = self.decoder1(x, skip1)
 
-        # Output constrained to [0, 1]
-        x = torch.sigmoid(self.output_layer(x))
+        # Global Residual Connection: network predicts the residual to add to the damaged image
+        residual = self.output_layer(x)
+        out = torch.clamp(identity + residual, 0.0, 1.0)
 
-        return x
+        return out
