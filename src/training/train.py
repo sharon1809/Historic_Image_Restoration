@@ -105,7 +105,7 @@ def main():
     )
 
     print("Initializing model...")
-    model = RestorationUNet(in_channels=3, out_channels=3, base_channels=64).to(device)
+    model = RestorationUNet(in_channels=3, out_channels=3, base_channels=32).to(device)
     criterion = CombinedLoss(mode=args.loss_mode, lpips_weight=0.5, ssim_weight=0.1, device=device).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     metrics_calculator = RestorationMetrics(device)
@@ -115,20 +115,27 @@ def main():
 
     early_stopper = EarlyStopping(patience=args.patience)
 
+    # Auto-resume from latest_model.pth if no explicit --resume is provided
+    resume_path = None
     if args.resume:
         resume_path = PROJECT_ROOT / args.resume
-        if resume_path.exists():
-            print(f"Loading checkpoint: {resume_path}")
-            checkpoint = torch.load(resume_path, map_location=device)
-            model.load_state_dict(checkpoint['model_state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            start_epoch = checkpoint['epoch'] + 1
-            if 'best_val_loss' in checkpoint:
-                best_val_loss = checkpoint['best_val_loss']
-                early_stopper.best_loss = best_val_loss
-            print(f"Successfully resumed! Will start training at Epoch {start_epoch}")
-        else:
-            print(f"Warning: Checkpoint {resume_path} not found. Starting from scratch.")
+    else:
+        potential_latest = checkpoint_dir / "latest_model.pth"
+        if potential_latest.exists():
+            resume_path = potential_latest
+
+    if resume_path and resume_path.exists():
+        print(f"Loading checkpoint to resume training: {resume_path}")
+        checkpoint = torch.load(resume_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        if 'best_val_loss' in checkpoint:
+            best_val_loss = checkpoint['best_val_loss']
+            early_stopper.best_loss = best_val_loss
+        print(f"Successfully resumed! Will start training at Epoch {start_epoch}")
+    elif args.resume:
+        print(f"Warning: Explicit resume checkpoint {resume_path} not found. Starting from scratch.")
 
     print(f"Starting training for {args.epochs} epoch(s)...")
 
@@ -226,13 +233,17 @@ def main():
             checkpoint_path = checkpoint_dir / f"unet_epoch_{epoch}.pth"
             torch.save(checkpoint_state, checkpoint_path)
             
+            # Always save latest_model.pth
+            latest_path = checkpoint_dir / "latest_model.pth"
+            torch.save(checkpoint_state, latest_path)
+            
             if avg_val_loss < best_val_loss:
                 best_val_loss = avg_val_loss
                 best_path = checkpoint_dir / "best_model.pth"
                 torch.save(checkpoint_state, best_path)
                 print(f"Saved NEW Best Checkpoint to {best_path}")
             
-            print(f"Saved checkpoint to {checkpoint_path}\n")
+            print(f"Saved checkpoints to {checkpoint_path} and latest_model.pth\n")
             
             early_stopper(avg_val_loss)
             if early_stopper.early_stop:
