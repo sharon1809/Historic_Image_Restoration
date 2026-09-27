@@ -55,6 +55,7 @@ def main():
     parser.add_argument("--image", type=str, required=True, help="Path to the damaged input image")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to the trained .pth checkpoint")
     parser.add_argument("--output", type=str, default="outputs/restored.jpg", help="Path to save the restored image")
+    parser.add_argument("--passes", type=int, default=3, help="Number of times to pass the image through the model recursively to erase thick scratches")
     
     args = parser.parse_args()
 
@@ -84,9 +85,13 @@ def main():
     # Pad image for U-Net downsampling dimensions
     padded_tensor, padding = pad_image(input_tensor, multiple=16)
 
-    print("Restoring image...")
+    print(f"Restoring image (running {args.passes} recursive passes)...")
     with torch.no_grad():
-        output_tensor = model(padded_tensor)
+        current_tensor = padded_tensor
+        for i in range(args.passes):
+            print(f"  -> Pass {i+1}/{args.passes}")
+            current_tensor = model(current_tensor)
+        output_tensor = current_tensor
 
     # Unpad back to original size
     output_tensor = unpad_image(output_tensor, padding)
