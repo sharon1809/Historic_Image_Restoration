@@ -2,127 +2,72 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from PIL import Image
+import numpy as np
 
-# Ensure the project root is in the python path
+# Ensure project root is in python path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import torch
-import torch.nn.functional as F
-from torchvision import transforms
-from PIL import Image
-
-from src.models import RestorationUNet
-
-def load_image(image_path: str) -> torch.Tensor:
-    image = Image.open(image_path).convert("RGB")
-    transform = transforms.ToTensor()
-    tensor = transform(image).unsqueeze(0) # Add batch dimension [1, 3, H, W]
-    return tensor
-
-def pad_image(tensor: torch.Tensor, multiple: int = 16):
-    """
-    Pad the image to ensure dimensions are divisible by `multiple` (required for U-Net).
-    Returns the padded tensor and the original padding applied.
-    """
-    _, _, h, w = tensor.shape
-    
-    pad_h = (multiple - h % multiple) % multiple
-    pad_w = (multiple - w % multiple) % multiple
-    
-    # padding format for F.pad is (left, right, top, bottom)
-    padding = (0, pad_w, 0, pad_h)
-    
-    padded_tensor = F.pad(tensor, padding, mode='reflect')
-    return padded_tensor, padding
-
-def unpad_image(tensor: torch.Tensor, padding: tuple) -> torch.Tensor:
-    """Remove the padding applied previously."""
-    _, right_pad, _, bottom_pad = padding
-    _, _, h, w = tensor.shape
-    
-    unpadded = tensor[:, :, :h - bottom_pad, :w - right_pad]
-    return unpadded
-
-def tensor_to_image(tensor: torch.Tensor) -> Image.Image:
-    tensor = tensor.squeeze(0).cpu().clamp(0, 1)
-    transform = transforms.ToPILImage()
-    return transform(tensor)
+from src.inference.pipeline import HistoricImageRestorationPipeline, RestorationConfig
 
 def main():
     parser = argparse.ArgumentParser(description="Restore a single historical image")
     parser.add_argument("--image", type=str, required=True, help="Path to the damaged input image")
-    parser.add_argument("--checkpoint", type=str, required=True, help="Path to the trained .pth checkpoint")
+    parser.add_argument("--checkpoint", type=str, default=None, help="Path to the trained .pth checkpoint (optional)")
     parser.add_argument("--output", type=str, default="outputs/restored.jpg", help="Path to save the restored image")
     parser.add_argument("--passes", type=int, default=3, help="Number of times to pass the image through the model recursively to erase thick scratches")
+    parser.add_argument("--pipeline", action="store_true", default=True, help="Run comprehensive restoration pipeline (defects, inpainting, color, sharpness)")
+    parser.add_argument("--sensitivity", type=int, default=25, help="Scratch detection sensitivity (1-100)")
+    parser.add_argument("--clahe", type=float, default=2.0, help="CLAHE contrast clip limit")
+    parser.add_argument("--gray-world", type=float, default=0.4, help="Gray-world color balance weight (0.0 - 1.0)")
+    parser.add_argument("--sharpen", type=float, default=1.0, help="Unsharp masking sharpness factor")
     
     args = parser.parse_args()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    p_img = Path(args.image)
+    if p_img.exists():
+        image_path = p_img.resolve()
+    elif (PROJECT_ROOT / p_img).exists():
+        image_path = (PROJECT_ROOT / p_img).resolve()
+    else:
+        raise FileNotFoundError(f"Input image not found: {args.image}")
 
-    # Ensure output dir exists
-    output_path = PROJECT_ROOT / args.output
+    p_out = Path(args.output)
+    if p_out.is_absolute():
+        output_path = p_out
+    elif p_out.parts and p_out.parts[0] == PROJECT_ROOT.name:
+        output_path = (PROJECT_ROOT.parent / p_out).resolve()
+    else:
+        output_path = (PROJECT_ROOT / p_out).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print("Loading model...")
-    model = RestorationUNet(in_channels=3, out_channels=3, base_channels=32)
-    
-    # Load checkpoint
-    checkpoint_path = PROJECT_ROOT / args.checkpoint
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
-        
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    model.to(device)
-    model.eval()
+    print(f"Loading restoration engine...")
+    pipeline = HistoricImageRestorationPipeline(default_checkpoint=args.checkpoint)
 
-    print(f"Loading image from {args.image}...")
-    input_tensor = load_image(PROJECT_ROOT / args.image).to(device)
-    
-    # Pad image for U-Net downsampling dimensions
-    padded_tensor, padding = pad_image(input_tensor, multiple=16)
+    cfg = RestorationConfig(
+        use_unet=(args.checkpoint is not None and pipeline.unet_model is not None),
+        unet_passes=args.passes,
+        scratch_sensitivity=args.sensitivity,
+        clahe_clip_limit=args.clahe,
+        gray_world_weight=args.gray_world,
+        sharpen_amount=args.sharpen,
+    )
 
-    print(f"Restoring image (running {args.passes} recursive passes)...")
-    with torch.no_grad():
-        current_tensor = padded_tensor
-        for i in range(args.passes):
-            print(f"  -> Pass {i+1}/{args.passes}")
-            current_tensor = model(current_tensor)
-        output_tensor = current_tensor
-
-    # Unpad back to original size
-    output_tensor = unpad_image(output_tensor, padding)
+    print(f"Restoring image from {image_path}...")
+    result = pipeline.restore(image_path, config=cfg)
 
     print(f"Saving restored image to {output_path}...")
-    output_image = tensor_to_image(output_tensor)
-    
-    # --- POST-PROCESSING ---
-    # The U-Net tends to shift colors/brightness (darkening). We can perfectly fix this 
-    # by matching the color histogram of the output to the original input image.
-    try:
-        import numpy as np
-        from skimage import exposure
-        
-        # Convert both to numpy arrays
-        original_np = np.array(Image.open(PROJECT_ROOT / args.image).convert("RGB"))
-        restored_np = np.array(output_image)
-        
-        # Match histograms
-        matched_np = exposure.match_histograms(restored_np, original_np, channel_axis=-1)
-        
-        # Convert back to PIL Image
-        output_image = Image.fromarray(matched_np.astype(np.uint8))
-        print("Successfully corrected color and brightness using histogram matching!")
-    except Exception as e:
-        print(f"Warning: Histogram matching failed ({e}). Saving raw output instead.")
-    # -----------------------
+    result["restored_pil"].save(output_path)
 
-    output_image.save(output_path)
-    
-    print("Done!")
+    m = result["metrics"]
+    print(f"\nRestoration Complete!")
+    print(f"  - Processing Time: {m['processing_time_s']:.3f} s")
+    print(f"  - Defects Repaired: {m['defect_percentage']:.2f}% of image")
+    print(f"  - Sharpness Gain: {m['sharpness_gain_pct']:.1f}%")
+    print(f"  - Output saved to: {output_path}")
 
 if __name__ == "__main__":
     main()

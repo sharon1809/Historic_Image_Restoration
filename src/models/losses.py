@@ -1,7 +1,10 @@
 import torch
 import torch.nn as nn
-import lpips
-from torchmetrics.image import StructuralSimilarityIndexMeasure
+
+try:
+    import lpips
+except ImportError:
+    lpips = None
 
 class L1ReconstructionLoss(nn.Module):
     """
@@ -46,14 +49,23 @@ class CombinedLoss(nn.Module):
         self.charbonnier_loss = CharbonnierLoss()
         
         if self.mode in ["A", "B", "D"]:
-            self.perceptual_loss = lpips.LPIPS(net='vgg').to(device).eval()
-            for param in self.perceptual_loss.parameters():
-                param.requires_grad = False
+            if lpips is not None:
+                self.perceptual_loss = lpips.LPIPS(net='vgg').to(device).eval()
+                for param in self.perceptual_loss.parameters():
+                    param.requires_grad = False
+            else:
+                self.perceptual_loss = None
+                print("Warning: lpips is not installed. Perceptual loss will be skipped.")
                 
         if self.mode in ["C", "D"]:
             # Note: SSIM measures similarity (1 is perfect). 
             # We minimize (1 - SSIM).
-            self.ssim_metric = StructuralSimilarityIndexMeasure(data_range=1.0).to(device)
+            try:
+                from torchmetrics.image import StructuralSimilarityIndexMeasure
+                self.ssim_metric = StructuralSimilarityIndexMeasure(data_range=1.0).to(device)
+            except ImportError:
+                self.ssim_metric = None
+                print("Warning: torchmetrics is not installed. SSIM loss component will be skipped.")
 
     def forward(self, prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         loss = 0.0
@@ -67,14 +79,14 @@ class CombinedLoss(nn.Module):
             raise ValueError(f"Unknown loss mode: {self.mode}")
             
         # 2. LPIPS Loss
-        if self.mode in ["A", "B", "D"]:
+        if self.mode in ["A", "B", "D"] and getattr(self, "perceptual_loss", None) is not None:
             pred_scaled = prediction * 2.0 - 1.0
             target_scaled = target * 2.0 - 1.0
             p_loss = self.perceptual_loss(pred_scaled, target_scaled).mean()
             loss += self.lpips_weight * p_loss
             
         # 3. SSIM Loss
-        if self.mode in ["C", "D"]:
+        if self.mode in ["C", "D"] and getattr(self, "ssim_metric", None) is not None:
             # SSIM can occasionally complain about grads if not careful, 
             # but torchmetrics SSIM handles differentiation.
             ssim_loss = 1.0 - self.ssim_metric(prediction, target)
